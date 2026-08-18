@@ -1,24 +1,37 @@
-# RAGFlow knowledge-base retrieval patch over the shipped composition.
+# The dsh-ragflow bundle patch: three rows, one per capability role, applied as
+# ONE insert over whatever composition precedes it.
+#
+# A later layer (your profile's cordis.patch.yml) addresses these rows by id and
+# replaces a row's whole `config` rather than merging into it — so when you
+# override one, restate every key that row needs.
+#
 # Prerequisites:
-# - A running RAGFlow instance (self-hosted or cloud)
-# - RAGFLOW_API_KEY set in the environment or credentials store
-# - RAGFLOW_BASE_URL set if not using the default localhost:9380
-# - At least one dataset created in RAGFlow with parsed documents
+# - A running RAGFlow instance (self-hosted or cloud).
+# - RAGFLOW_API_KEY in the credentials store or the launching environment.
+# - RAGFLOW_BASE_URL when the instance is not at http://localhost:9380.
+# - At least one dataset with parsed documents, named by RAGFLOW_DATASET_IDS
+#   (comma-separated) or by the `datasetIds` row config below. RAGFlow rejects a
+#   retrieval that names no dataset and no document.
 
 - insert:
+    # ── Service Definition: owns ctx.ragflow, selects among providers ─────────
+    # `retrieveProvider` stays unset: with one provider mounted it auto-selects,
+    # and pinning an id would make swapping the provider row a two-row edit.
     - id: ragflow
       name: '@deepseek-ai/dsh-ragflow'
+
+    # ── Service Provider: the RAGFlow HTTP API ────────────────────────────────
+    # apiKeyEnv defaults to RAGFLOW_API_KEY; baseURL and datasetIds fall back to
+    # $RAGFLOW_BASE_URL and $RAGFLOW_DATASET_IDS. Never inline `apiKey` here —
+    # use the credentials service or the environment.
+    - id: ragflow-http
+      name: '@deepseek-ai/dsh-ragflow/http'
       config:
-        # apiKeyEnv defaults to RAGFLOW_API_KEY; only override for a custom env var
-        # apiKey: never inline secrets in YAML; use the credentials service instead
-        baseURL: !!js >-
-          process.env.RAGFLOW_BASE_URL?.trim() || 'http://localhost:9380'
-        # Default datasets to search; omit to search all authorized datasets
-        datasetIds: !!js >-
-          process.env.RAGFLOW_DATASET_IDS?.trim()
-            ? process.env.RAGFLOW_DATASET_IDS.split(',').map(s => s.trim()).filter(s => s.length > 0)
-            : undefined
-        topK: 10
         similarityThreshold: 0.2
-        retrieveTopK: 10
-        retrieveTimeoutMs: 30000
+
+    # ── Consumer: the model-facing ragflow_retrieve tool ──────────────────────
+    - id: tool-ragflow
+      name: '@deepseek-ai/dsh-ragflow/tool'
+      config:
+        maxChunks: 8
+        timeoutMs: 30000
