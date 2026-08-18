@@ -35,7 +35,6 @@
   },
   "scripts": {
     "build": "tsdown",
-    "prepare": "pnpm run build",
     "clean": "rm -rf lib"
   },
   "devDependencies": {
