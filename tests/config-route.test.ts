@@ -10,7 +10,10 @@ class FakeSettings {
   readonly writes: { ns: string, ops: readonly SettingsPathOp[], expected?: number }[] = []
   readonly documentPath = '/home/dev/.dsh/settings.yaml'
 
-  constructor(private readonly sections: Record<string, { value: Record<string, unknown>, user?: object, revision: number }>) {}
+  constructor(
+    private readonly sections: Record<string, { value: Record<string, unknown>, user?: object, revision: number }>,
+    private readonly refuse?: Error,
+  ) {}
 
   describe(): unknown[] {
     return Object.entries(this.sections).map(([ns, section]) => ({
@@ -28,6 +31,7 @@ class FakeSettings {
   }
 
   async mutate(ns: string, ops: readonly SettingsPathOp[], expected?: number): Promise<void> {
+    if (this.refuse !== undefined) throw this.refuse
     this.writes.push({ ns, ops, ...expected === undefined ? {} : { expected } })
   }
 }
@@ -35,13 +39,17 @@ class FakeSettings {
 /** A credential stand-in that never reveals a value, like the real seam. */
 class FakeCredentials {
   readonly stored: { ref: string, value: string }[] = []
-  constructor(private readonly info: { configured: boolean, writable: boolean, source?: string }) {}
+  constructor(
+    private readonly info: { configured: boolean, writable: boolean, source?: string },
+    private readonly refuse?: Error,
+  ) {}
 
   async describe(): Promise<{ configured: boolean, writable: boolean, source?: string }> {
     return this.info
   }
 
   async set(ref: string, value: string): Promise<void> {
+    if (this.refuse !== undefined) throw this.refuse
     this.stored.push({ ref: String(ref), value })
   }
 }
@@ -241,6 +249,37 @@ describe('the configuration route', () => {
     await handler(post('/ragflow/save', { provider: { revision: 0, fields: {} } }), write.res)
     expect(write.captured.status).toBe(503)
     expect(JSON.parse(write.captured.body).code).toBe('SETTINGS_ABSENT')
+  })
+
+  it('answers a stale form with 409 — detected by the seam code, not by class identity', async () => {
+    // A linked or duplicated settings package makes `instanceof` silently false,
+    // which is why the route reads the seam's own `code`.
+    const conflict = Object.assign(new Error('namespace changed since it was read'), { code: 'SETTINGS_CONFLICT' })
+    const { handler } = mount({ settings: new FakeSettings({ 'ragflow-http': providerSection }, conflict) })
+    const { res, captured } = response()
+    await handler(post('/ragflow/save', { provider: { revision: 1, fields: { rerankId: null } } }), res)
+    expect(captured.status).toBe(409)
+    expect(JSON.parse(captured.body).code).toBe('SETTINGS_CONFLICT')
+  })
+
+  it('reports a schema rejection as a rejected save, with the seam message', async () => {
+    const rejection = new Error('$.similarityThreshold expected number <= 1 but got 5')
+    const { handler } = mount({ settings: new FakeSettings({ 'ragflow-http': providerSection }, rejection) })
+    const { res, captured } = response()
+    await handler(post('/ragflow/save', { provider: { revision: 4, fields: { similarityThreshold: 5 } } }), res)
+    expect(captured.status).toBe(400)
+    expect(JSON.parse(captured.body)).toEqual({ error: rejection.message, code: 'SETTINGS_REJECTED' })
+  })
+
+  it('reports a key the credential seam refuses, rather than storing something nothing resolves', async () => {
+    const shadowed = new Error('a read-only source shadows RAGFLOW_API_KEY')
+    const credentials = new FakeCredentials({ configured: true, writable: false, source: 'env' }, shadowed)
+    const { handler } = mount({ settings: settings(), credentials })
+    const { res, captured } = response()
+    await handler(post('/ragflow/save', { apiKey: 'ragflow-xxx' }), res)
+    expect(captured.status).toBe(400)
+    expect(JSON.parse(captured.body).code).toBe('CREDENTIAL_REJECTED')
+    expect(credentials.stored).toEqual([])
   })
 
   it('answers an unknown endpoint under its prefix with 404', async () => {

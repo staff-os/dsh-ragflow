@@ -434,6 +434,16 @@ export const CONFIG_PAGE_HTML = `<!doctype html>
     for (var k = 0; k < PROVIDER_NUM.length; k++) fill(PROVIDER_NUM[k], provider, identity);
     for (var m = 0; m < TOOL_NUM.length; m++) fill(TOOL_NUM[m], tool, identity);
 
+    // These two resolve through the launch environment BELOW the settings
+    // layer, so their inherited value is not in the section — name it from the
+    // effective block instead of leaving the box saying only "inherit".
+    if (provider.available && provider.overridden.indexOf('baseURL') < 0) {
+      el('baseURL').placeholder = state.effective.baseURL;
+    }
+    if (provider.available && provider.overridden.indexOf('datasetIds') < 0 && state.effective.datasetIds.length > 0) {
+      el('datasetIds').placeholder = state.effective.datasetIds.join(', ');
+    }
+
     var keyword = el('keyword');
     var keywordOwned = provider.available && provider.overridden.indexOf('keyword') >= 0;
     keyword.value = keywordOwned ? String(provider.value.keyword === true) : '';

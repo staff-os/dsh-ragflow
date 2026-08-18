@@ -25,8 +25,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
-import type { SettingsDescriptor, SettingsPathOp } from '@deepseek-ai/dsh-settings'
-import { SettingsConflictError } from '@deepseek-ai/dsh-settings'
+import type { SettingsDescriptor, SettingsPathOp, SettingsProvider } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from './index.ts'
 import {
@@ -351,6 +350,40 @@ export async function buildState(ctx: Context): Promise<ConfigState> {
   }
 }
 
+/** The machine code a thrown value carries, when it carries one. */
+export function codeOf(error: unknown): string | undefined {
+  const raw = (error as { code?: unknown } | null | undefined)?.code
+  return typeof raw === 'string' ? raw : undefined
+}
+
+/**
+ * Map a settings-seam refusal to the answer the page acts on. Detection is by
+ * the seam's machine `code`, never `instanceof`: a linked or duplicated copy of
+ * the settings package would make the class check silently false and downgrade
+ * a conflict into a generic failure.
+ */
+function settingsWriteError(error: unknown): ConfigRequestError {
+  if (codeOf(error) === 'SETTINGS_CONFLICT') {
+    return new ConfigRequestError(409, 'the settings document changed since this page loaded; reload and reapply', 'SETTINGS_CONFLICT')
+  }
+  return new ConfigRequestError(400, error instanceof Error ? error.message : String(error), 'SETTINGS_REJECTED')
+}
+
+/** Run one section write, translating every seam refusal into a page answer. */
+async function writeSection(
+  settings: SettingsProvider,
+  section: SaveSection,
+  ns: Parameters<SettingsProvider['mutate']>[0],
+  allowed: Readonly<Record<string, FieldKind>>,
+): Promise<void> {
+  const ops = planSectionOps(section.fields, allowed)
+  try {
+    await settings.mutate(ns, ops, section.revision)
+  } catch (error) {
+    throw settingsWriteError(error)
+  }
+}
+
 /**
  * Apply one submitted form: the settings edits first (each fenced by the
  * revision the page read), then the credential. The key is written last so a
@@ -366,18 +399,10 @@ export async function applySave(ctx: Context, request: SaveRequest): Promise<voi
       throw new ConfigRequestError(503, 'this deployment mounts no settings provider, so values cannot be saved', 'SETTINGS_ABSENT')
     }
     if (request.provider !== undefined) {
-      await settings.mutate(
-        RAGFLOW_HTTP_SETTINGS_NAMESPACE,
-        planSectionOps(request.provider.fields, PROVIDER_FIELDS),
-        request.provider.revision,
-      )
+      await writeSection(settings, request.provider, RAGFLOW_HTTP_SETTINGS_NAMESPACE, PROVIDER_FIELDS)
     }
     if (request.tool !== undefined) {
-      await settings.mutate(
-        RAGFLOW_TOOL_SETTINGS_NAMESPACE,
-        planSectionOps(request.tool.fields, TOOL_FIELDS),
-        request.tool.revision,
-      )
+      await writeSection(settings, request.tool, RAGFLOW_TOOL_SETTINGS_NAMESPACE, TOOL_FIELDS)
     }
   }
   const apiKey = request.apiKey?.trim()
@@ -387,7 +412,13 @@ export async function applySave(ctx: Context, request: SaveRequest): Promise<voi
     throw new ConfigRequestError(503, 'this deployment mounts no credential provider, so the API key cannot be saved', 'CREDENTIALS_ABSENT')
   }
   const resolved = settings?.get(RAGFLOW_HTTP_SETTINGS_NAMESPACE) as { apiKeyEnv?: string } | undefined
-  await credentials.set(credentialRef(resolved?.apiKeyEnv ?? DEFAULT_API_KEY_ENV), apiKey)
+  try {
+    await credentials.set(credentialRef(resolved?.apiKeyEnv ?? DEFAULT_API_KEY_ENV), apiKey)
+  } catch (error) {
+    // The seam refuses a write a read-only layer would shadow (a key in the
+    // launch environment); saying so beats storing a value nothing resolves.
+    throw new ConfigRequestError(400, error instanceof Error ? error.message : String(error), 'CREDENTIAL_REJECTED')
+  }
 }
 
 /** Run one live retrieval so the page can report whether the settings work. */
@@ -403,12 +434,10 @@ export async function runProbe(ctx: Context, question: string): Promise<{ chunks
 /** Map a thrown value to the status and body the endpoints answer with. */
 export function errorResponse(error: unknown): { status: number, body: { error: string, code: string } } {
   if (error instanceof ConfigRequestError) return { status: error.status, body: { error: error.message, code: error.code } }
-  if (error instanceof SettingsConflictError) {
-    return { status: 409, body: { error: 'the settings document changed since this page loaded; reload and reapply', code: error.code } }
+  if (codeOf(error) === 'SETTINGS_CONFLICT') {
+    return { status: 409, body: { error: 'the settings document changed since this page loaded; reload and reapply', code: 'SETTINGS_CONFLICT' } }
   }
-  const raw = (error as { code?: unknown } | null)?.code
-  const code = typeof raw === 'string' ? raw : 'INTERNAL'
-  return { status: 400, body: { error: error instanceof Error ? error.message : String(error), code } }
+  return { status: 400, body: { error: error instanceof Error ? error.message : String(error), code: codeOf(error) ?? 'INTERNAL' } }
 }
 
 /** Send one JSON response with caching disabled — this page reports live state. */
