@@ -30,7 +30,7 @@ DSH supports two plugin installation paths. Choose based on your scenario.
 When this plugin lives in its own git repository (with `lib/` built and committed, or a build script available), install it into a running DSH profile with one command:
 
 ```sh
-dsh plugin --profile web add "github:<owner>/dsh-ragflow#main"
+dsh plugin --profile web add "github:staff-os/dsh-ragflow#main"
 ```
 
 `dsh plugin add` forwards the source to `pnpm` as-is, so any pnpm-recognized source works: git URLs, `link:` for local development, etc.

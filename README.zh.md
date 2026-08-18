@@ -30,7 +30,7 @@ DSH 支持两种插件安装方式，根据场景选择。
 当本插件作为独立 git 仓库存在时（`lib/` 已构建并提交，或构建脚本可用），用一行命令安装到已运行的 DSH profile：
 
 ```sh
-dsh plugin --profile web add "github:<owner>/dsh-ragflow#main"
+dsh plugin --profile web add "github:staff-os/dsh-ragflow#main"
 ```
 
 `dsh plugin add` 会将参数原样转发给 `pnpm`，因此任何 pnpm 能识别的源都可以：git 源、`link:` 本地目录等。
