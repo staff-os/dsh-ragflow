@@ -2,147 +2,153 @@
 
 English | [中文](README.zh.md)
 
-RAGFlow knowledge-base retrieval plugin for the DeepSeek Harness. It gives the agent a `ragflow_retrieve` tool to query connected RAGFlow datasets for relevant document chunks with similarity scores.
+RAGFlow knowledge-base retrieval for the [DeepSeek Harness](https://deepseekdocs.com). It gives the
+agent a `ragflow_retrieve` tool that queries your RAGFlow datasets and returns document chunks with
+similarity scores and source names.
 
-## Structure
+## Design
 
-This single package combines all three capability-seam roles:
+The package follows the Harness [three-role capability
+pattern](https://deepseekdocs.com/docs/learn/dev/practice): one seam, one provider, one consumer —
+shipped as one package with three plugin entry points, so a profile can override, replace, or drop
+any single role without touching the others.
 
-| Role | Component | Responsibility |
-|---|---|---|
-| Service Definition | `RagflowRuntime` (`src/runtime.ts`) | `ctx.ragflow` provider registry, selection semantics, result caps |
-| Service Provider | `RagflowProvider` (`src/provider.ts`) | Calls RAGFlow HTTP API `POST /api/v1/retrieval` |
-| Consumer / Tool | `ragflow_retrieve` (`src/tool.ts`) | Model-facing tool: schema, prompt guidance, formatting |
+| Role | Module | Plugin name | Responsibility |
+|---|---|---|---|
+| Service Definition | [src/index.ts](src/index.ts) | `@deepseek-ai/dsh-ragflow` | Owns `ctx.ragflow`: provider registry, order-independent selection, `maxChunks` enforcement |
+| Service Provider | [src/http.ts](src/http.ts) | `@deepseek-ai/dsh-ragflow/http` | Calls `POST /api/v1/retrieval`, resolves credentials, normalizes chunks |
+| Consumer | [src/tool.ts](src/tool.ts) | `@deepseek-ai/dsh-ragflow/tool` | The model-facing tool: schema, prompt guidance, chunk bound, presentation |
+
+The provider and the consumer depend only on the Service Definition, never on each other. Replacing
+the backend means replacing one row:
+
+```yaml
+- id: ragflow-http
+  name: 'your-own-ragflow-provider'
+```
 
 ## Prerequisites
 
-1. **Run a RAGFlow instance**: self-hosted or cloud. Default connects to `http://localhost:9380`; override through `RAGFLOW_BASE_URL`.
-2. **Acquire an API key**: create an API key in RAGFlow and supply it through `RAGFLOW_API_KEY` or the DSH credentials service.
-3. **Create a dataset**: create at least one dataset in RAGFlow and upload and parse documents.
-4. **(Optional) Specify datasets**: set `RAGFLOW_DATASET_IDS` (comma-separated).
+1. **A running RAGFlow instance** — self-hosted or cloud. Defaults to `http://localhost:9380`.
+2. **An API key** — create one in RAGFlow.
+3. **A dataset with parsed documents** — RAGFlow rejects a retrieval that names no dataset and no
+   document, so at least one dataset id must be configured.
 
 ## Install
-
-DSH supports two plugin installation paths. Choose based on your scenario.
-
-### Path A — Bundle plugin (recommended for standalone repo)
-
-When this plugin lives in its own git repository (with `lib/` built and committed, or a build script available), install it into a running DSH profile with one command:
 
 ```sh
 dsh plugin --profile web add "github:staff-os/dsh-ragflow#main"
 ```
 
-`dsh plugin add` forwards the source to `pnpm` as-is, so any pnpm-recognized source works: git URLs, `link:` for local development, etc.
+`dsh plugin add` forwards the source to pnpm as-is, so any pnpm-recognized source works:
 
 ```sh
-# Local directory (development)
-dsh plugin --profile web add link:/path/to/dsh-ragflow
+dsh plugin --profile web add link:/path/to/dsh-ragflow   # local development
 ```
 
-After installation, **restart `dsh web`** for the bundle to take effect. Verify the composition tree:
+`lib/` is committed, so no build script runs at install time and pnpm needs no build allowance.
+Restart `dsh web` afterwards, then verify the three rows landed:
 
 ```sh
-dsh web --dump-config | grep ragflow
+dsh --profile web --dump-config | grep ragflow
 ```
 
-### Path B — Manual patch overlay (for in-workspace development)
+## Configure
 
-If you are working inside the `deepseek-harness` monorepo, the workspace `examples/package.json` already declares `@deepseek-ai/dsh-ragflow` as a workspace dependency. Run `pnpm install` to link it, then pass the overlay at launch:
+Set the environment the plugin reads — no YAML needed for the common case:
 
 ```sh
-dsh web --patch examples/dsh-ragflow/cordis.patch.yml
+export RAGFLOW_API_KEY=ragflow-xxx
+export RAGFLOW_BASE_URL=http://your-ragflow-host:9380     # optional, defaults to localhost:9380
+export RAGFLOW_DATASET_IDS=dataset_id_1,dataset_id_2      # required unless set in YAML
 ```
 
-To persist across runs, merge the `insert` entries into `$DSH_HOME/profiles/<profile>/cordis.patch.yml`:
+The API key resolves through the DSH credentials service when one is mounted
+(`~/.dsh/.credentials.yaml`), and through the launch environment otherwise. Never inline a key in a
+config file.
+
+To override a row, restate it in your profile's `cordis.patch.yml` — a patch replaces a row's whole
+`config` rather than merging into it, so state every key that row needs:
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml
 - insert:
-    - id: ragflow
-      name: '@deepseek-ai/dsh-ragflow'
+    - id: ragflow-http
+      name: '@deepseek-ai/dsh-ragflow/http'
       config:
         baseURL: http://your-ragflow-host:9380
-        topK: 10
-        similarityThreshold: 0.2
+        datasetIds: ['dataset_id_1']
+        similarityThreshold: 0.3
+        vectorTopK: 1024
 ```
 
-### Build (standalone repo only)
-
-If `lib/` is not committed, build before install:
-
-```sh
-pnpm install
-pnpm build    # tsdown → lib/index.js + .d.ts
-```
-
-The `package.json` `dsh.bundle.patch` field points the DSH plugin loader to `cordis.patch.yml`.
-
-## Credentials
-
-Supply the RAGFlow API key through one of these channels (in priority order):
-
-| Method | Where | Notes |
-|---|---|---|
-| DSH credentials service | `~/.dsh/.credentials.yaml` | Managed, atomic 0600 permissions |
-| Environment variable | `RAGFLOW_API_KEY` in `.env` or shell | Process env > cwd `.env` > `~/.dsh/.env` |
-
-```sh
-# Option 1: ~/.dsh/.credentials.yaml
-ragflow-api-key: ragflow-xxx
-
-# Option 2: shell export or .env
-export RAGFLOW_API_KEY=ragflow-xxx
-export RAGFLOW_BASE_URL=http://your-ragflow-host:9380   # optional
-export RAGFLOW_DATASET_IDS=dataset_id_1,dataset_id_2    # optional
-```
-
-## Configuration
+### `@deepseek-ai/dsh-ragflow` (seam)
 
 | Config | Default | Description |
 |---|---|---|
-| `apiKey` | — | RAGFlow API key (prefer `apiKeyEnv`) |
-| `apiKeyEnv` | `RAGFLOW_API_KEY` | Credential reference name |
-| `baseURL` | `http://localhost:9380` | RAGFlow API endpoint base |
-| `datasetIds` | — | Default dataset IDs to search |
-| `topK` | `10` | Provider-level chunk limit |
-| `similarityThreshold` | `0.2` | Chunks below this similarity are filtered |
-| `retrieveTopK` | `10` | Tool-level chunk upper bound |
-| `retrieveTimeoutMs` | `30000` | Cooperative timeout (ms) |
+| `retrieveProvider` | auto | Provider id to pin. Unset auto-selects when exactly one is usable. Also `$DSH_RAGFLOW_PROVIDER`. |
 
-`config` in `cordis.patch.yml` is **whole-object replacement**, not deep merge. Always specify all fields you need.
+### `@deepseek-ai/dsh-ragflow/http` (provider)
 
-## Verify
+| Config | Default | Description |
+|---|---|---|
+| `apiKey` | — | Literal key. Prefer `apiKeyEnv`. |
+| `apiKeyEnv` | `RAGFLOW_API_KEY` | Credential reference resolved per retrieval. |
+| `baseURL` | `$RAGFLOW_BASE_URL` → `http://localhost:9380` | Endpoint base; `/api/v1/retrieval` is appended. |
+| `datasetIds` | `$RAGFLOW_DATASET_IDS` | Datasets searched by default. |
+| `documentIds` | — | Narrows the search below dataset level. |
+| `similarityThreshold` | `0.2` | Chunks below this combined similarity are dropped. |
+| `vectorTopK` | RAGFlow's `1024` | RAGFlow's `top_k`: the vector candidate pool, **not** the result count. |
+| `vectorSimilarityWeight` | RAGFlow's `0.3` | Vector weight in RAGFlow's hybrid score. |
+| `keyword` | `false` | Run RAGFlow's keyword pass alongside vector search. |
+| `rerankId` | — | Rerank model applied to the candidate pool. |
+
+### `@deepseek-ai/dsh-ragflow/tool` (consumer)
+
+| Config | Default | Description |
+|---|---|---|
+| `maxChunks` | `8` | Upper bound on chunks per call; sent as RAGFlow's `page_size` and enforced again by the seam. |
+| `timeoutMs` | `30000` | Cooperative per-call timeout budget. |
+
+## Retrieval flow
+
+1. The model calls `ragflow_retrieve` with a `question`.
+2. The tool validates it and calls `ctx.ragflow.retrieve({ question, maxChunks }, signal)`.
+3. The seam selects the usable provider and forwards the request.
+4. The provider posts to `/api/v1/retrieval` and normalizes `data.chunks[]`.
+5. The seam caps the result to `maxChunks`; the tool renders it as cited text plus structured
+   metadata that survives session replay.
+
+An empty result is a result: the tool tells the model the knowledge base has nothing relevant and
+not to invent a citation.
+
+## Develop
 
 ```sh
-# Check the plugin is loaded in the composition tree
-dsh web --dump-config | grep ragflow
-
-# In the Web UI: Settings → Plugins → look for "ragflow"
+pnpm install
+pnpm test        # vitest
+pnpm typecheck   # tsc --noEmit
+pnpm build       # tsdown → lib/{index,http,tool}.js
 ```
 
-The `ragflow_retrieve` tool appears in the model's tool list once the plugin is active.
+`lib/` is committed; rebuild and commit it with any `src/` change.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `ragflow_retrieve` not in tool list | Bundle not built or not loaded | Run `pnpm build`; restart `dsh web` |
-| Bare `cordis`/`schemastery` resolve error | Closure only has `@deepseek-ai/*` packages | Ensure imports use `@deepseek-ai/schemastery` |
-| Patch applied but no effect | `name` mismatch → silent skip | Verify `name: '@deepseek-ai/dsh-ragflow'` in patch |
-| API key not found | Credential reference mismatch | Check `apiKeyEnv` matches the credential key |
-| Uninstall leaves patch residue | `dsh plugin remove` does not rewrite patch layer | Manually delete the `insert` block from `cordis.patch.yml` |
+| `RAGFLOW_SCOPE_MISSING` | No dataset or document in scope | Set `datasetIds` or `$RAGFLOW_DATASET_IDS` |
+| `RAGFLOW_PROVIDER_CREDENTIAL_MISSING` | No key for the credential reference | Set `$RAGFLOW_API_KEY`, or match `apiKeyEnv` to your credentials key |
+| `RAGFLOW_PROVIDER_UNAUTHORIZED` | RAGFlow rejected the key | Reissue the key in RAGFlow |
+| `RAGFLOW_PROVIDER_UNAVAILABLE` | Provider row missing or its options invalid | Check `--dump-config` for the `ragflow-http` row |
+| `RAGFLOW_PROVIDER_AMBIGUOUS` | Two usable providers registered | Pin one with the seam's `retrieveProvider` |
+| `ragflow_retrieve` absent from the tool list | Bundle not loaded | `dsh --dump-config \| grep ragflow`; restart `dsh web` |
+| Fewer chunks than expected | `vectorTopK` is not the result count | Raise `maxChunks` on the tool row |
 
-## Retrieval flow
+## Known limitations
 
-1. The model calls `ragflow_retrieve` with a `question`.
-2. The tool delegates to `ctx.ragflow.retrieve()`.
-3. The provider sends `POST /api/v1/retrieval` to RAGFlow.
-4. Response chunks are normalized with content, document source, and similarity.
-5. The result returns to the model as formatted text with structured metadata.
-
-## Known Limitations and Deferred Work
-
-- No streaming retrieval; the full response is awaited before returning.
-- No dataset management (create/delete/upload); retrieval only.
-- No UI presentation card beyond the generic search card.
+- Retrieval only — no dataset or document management (create, upload, parse).
+- No streaming; the full response is awaited.
+- The result renders as the generic search card, not a bespoke citation card.
+- RAGFlow's `cross_languages`, `metadata_condition`, `highlight`, and `use_kg` options are not
+  surfaced yet.
