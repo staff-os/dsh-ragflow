@@ -1,0 +1,24 @@
+# RAGFlow knowledge-base retrieval patch over the shipped composition.
+# Prerequisites:
+# - A running RAGFlow instance (self-hosted or cloud)
+# - RAGFLOW_API_KEY set in the environment or credentials store
+# - RAGFLOW_BASE_URL set if not using the default localhost:9380
+# - At least one dataset created in RAGFlow with parsed documents
+
+- insert:
+    - id: ragflow
+      name: '@deepseek-ai/dsh-ragflow'
+      config:
+        # apiKeyEnv defaults to RAGFLOW_API_KEY; only override for a custom env var
+        # apiKey: never inline secrets in YAML; use the credentials service instead
+        baseURL: !!js >-
+          process.env.RAGFLOW_BASE_URL?.trim() || 'http://localhost:9380'
+        # Default datasets to search; omit to search all authorized datasets
+        datasetIds: !!js >-
+          process.env.RAGFLOW_DATASET_IDS?.trim()
+            ? process.env.RAGFLOW_DATASET_IDS.split(',').map(s => s.trim()).filter(s => s.length > 0)
+            : undefined
+        topK: 10
+        similarityThreshold: 0.2
+        retrieveTopK: 10
+        retrieveTimeoutMs: 30000
