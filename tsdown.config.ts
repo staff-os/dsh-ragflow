@@ -13,7 +13,7 @@ import { defineConfig } from 'tsdown'
  * `instanceof` checks and split the `ctx.ragflow` service registry.
  */
 export default defineConfig({
-  entry: ['src/index.ts', 'src/http.ts', 'src/tool.ts'],
+  entry: ['src/index.ts', 'src/http.ts', 'src/tool.ts', 'src/config.ts'],
   outDir: 'lib',
   format: 'esm',
   fixedExtension: false,
@@ -27,8 +27,10 @@ export default defineConfig({
     neverBundle: [
       '@deepseek-ai/cordis',
       '@deepseek-ai/dsh-credentials',
+      '@deepseek-ai/dsh-host-webserver',
       '@deepseek-ai/dsh-launch-environment',
       '@deepseek-ai/dsh-llm',
+      '@deepseek-ai/dsh-settings',
       '@deepseek-ai/dsh-system-prompt',
       '@deepseek-ai/dsh-tools',
     ],

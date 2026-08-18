@@ -10,14 +10,16 @@ similarity scores and source names.
 
 The package follows the Harness [three-role capability
 pattern](https://deepseekdocs.com/docs/learn/dev/practice): one seam, one provider, one consumer —
-shipped as one package with three plugin entry points, so a profile can override, replace, or drop
-any single role without touching the others.
+shipped as one package with four plugin entry points (the fourth is the configuration page over the
+same values), so a profile can override, replace, or drop any single role without touching the
+others.
 
 | Role | Module | Plugin name | Responsibility |
 |---|---|---|---|
 | Service Definition | [src/index.ts](src/index.ts) | `@deepseek-ai/dsh-ragflow` | Owns `ctx.ragflow`: provider registry, order-independent selection, `maxChunks` enforcement |
 | Service Provider | [src/http.ts](src/http.ts) | `@deepseek-ai/dsh-ragflow/http` | Calls `POST /api/v1/retrieval`, resolves credentials, normalizes chunks |
 | Consumer | [src/tool.ts](src/tool.ts) | `@deepseek-ai/dsh-ragflow/tool` | The model-facing tool: schema, prompt guidance, chunk bound, presentation |
+| Consumer | [src/config.ts](src/config.ts) | `@deepseek-ai/dsh-ragflow/config` | The person-facing configuration page over the same settings and credential seams |
 
 The provider and the consumer depend only on the Service Definition, never on each other. Replacing
 the backend means replacing one row:
@@ -47,7 +49,7 @@ dsh plugin --profile web add link:/path/to/dsh-ragflow   # local development
 ```
 
 `lib/` is committed, so no build script runs at install time and pnpm needs no build allowance.
-Restart `dsh web` afterwards, then verify the three rows landed:
+Restart `dsh web` afterwards, then verify the four rows landed:
 
 ```sh
 dsh --profile web --dump-config | grep ragflow
@@ -55,7 +57,38 @@ dsh --profile web --dump-config | grep ragflow
 
 ## Configure
 
-Set the environment the plugin reads — no YAML needed for the common case:
+Three ways in, one set of values. The configuration page is the easy one; the environment and the
+YAML rows remain exactly what they were.
+
+### The configuration page
+
+With `dsh web` running, open **http://127.0.0.1:3080/ragflow** (whatever port the web surface
+printed). It edits the endpoint, the datasets, the retrieval options, and the tool bound, and it
+stores the API key through the credential service — the key never reaches a settings file, and the
+field reports only whether one is configured.
+
+Every field is *leave empty to inherit*: the box holds your own override, the placeholder names the
+value in effect without one. Clearing a box is how a field goes back to inheriting the composition
+row, the environment variable, or the schema default. **Test retrieval** runs one live retrieval so
+a saved endpoint can be confirmed rather than assumed.
+
+The page is served on loopback only, whatever `dsh web --host` binds, because it reads deployment
+configuration and writes a credential. Move it with the row's `path`, or take it out entirely:
+
+```yaml
+# ~/.dsh/profiles/web/cordis.patch.yml
+- id: ragflow-config
+  disabled: true
+```
+
+Saved values land in `~/.dsh/settings.yaml` under the `ragflow-http` and `tool-ragflow` namespaces,
+which layer over the composition rows: schema defaults, then the `cordis.patch.yml` entry, then
+your saved section. They apply to the next retrieval without a restart — except `timeoutMs`, which
+the tool registry reads once when the tool registers.
+
+### Environment variables
+
+Set the environment the plugin reads — no YAML and no page needed for the common case:
 
 ```sh
 export RAGFLOW_API_KEY=ragflow-xxx
@@ -108,7 +141,13 @@ To override a row, restate it in your profile's `cordis.patch.yml` — a patch r
 | Config | Default | Description |
 |---|---|---|
 | `maxChunks` | `8` | Upper bound on chunks per call; sent as RAGFlow's `page_size` and enforced again by the seam. |
-| `timeoutMs` | `30000` | Cooperative per-call timeout budget. |
+| `timeoutMs` | `30000` | Cooperative per-call timeout budget. Read at registration: a change applies at the next start. |
+
+### `@deepseek-ai/dsh-ragflow/config` (configuration page)
+
+| Config | Default | Description |
+|---|---|---|
+| `path` | `/ragflow` | Pathname the page and its JSON endpoints (`/state`, `/save`, `/probe`) are served under. |
 
 ## Retrieval flow
 
@@ -128,7 +167,7 @@ not to invent a citation.
 pnpm install
 pnpm test        # vitest
 pnpm typecheck   # tsc --noEmit
-pnpm build       # tsdown → lib/{index,http,tool}.js
+pnpm build       # tsdown → lib/{index,http,tool,config}.js
 ```
 
 `lib/` is committed; rebuild and commit it with any `src/` change.
@@ -144,10 +183,19 @@ pnpm build       # tsdown → lib/{index,http,tool}.js
 | `RAGFLOW_PROVIDER_AMBIGUOUS` | Two usable providers registered | Pin one with the seam's `retrieveProvider` |
 | `ragflow_retrieve` absent from the tool list | Bundle not loaded | `dsh --dump-config \| grep ragflow`; restart `dsh web` |
 | Fewer chunks than expected | `vectorTopK` is not the result count | Raise `maxChunks` on the tool row |
+| The page answers `NOT_LOOPBACK` | Reached over a LAN address | Open it from the host itself, or tunnel the port |
+| The page answers `SETTINGS_CONFLICT` | The settings document moved since the page loaded | Reload the page and reapply |
+| The API key field is read-only | A launch-environment `RAGFLOW_API_KEY` shadows the store | Change the variable and restart `dsh`, or unset it to manage the key from the page |
+| No page at `/ragflow` | Surface without a web server, or the row is disabled | `dsh --dump-config \| grep ragflow-config` |
 
 ## Known limitations
 
 - Retrieval only — no dataset or document management (create, upload, parse).
+- The page is this plugin's own, not a card in DSH's **Settings → Plugins** tab: that tab renders
+  only the settings namespaces the host api-proxy allowlists (`WEB_SETTINGS_NAMESPACES`), which a
+  plugin distributed outside the harness repository cannot join without patching a released
+  package. If that allowlist ever moves to `settings.register()`, these same namespaces become a
+  card there with no change here.
 - No streaming; the full response is awaited.
 - The result renders as the generic search card, not a bespoke citation card.
 - RAGFlow's `cross_languages`, `metadata_condition`, `highlight`, and `use_kg` options are not

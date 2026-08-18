@@ -15,9 +15,13 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { GenericCallView, JsonValue } from '@deepseek-ai/dsh-tools'
+import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { RagflowChunk, RagflowRetrieveResult } from './types.ts'
 import type {} from './index.ts'
+import { RAGFLOW_TOOL_SETTINGS_NAMESPACE } from './settings.ts'
+
+export { RAGFLOW_TOOL_SETTINGS_NAMESPACE } from './settings.ts'
 
 /**
  * Default upper bound on returned chunks. Owned by the consumer, not the
@@ -148,10 +152,23 @@ export function retrieveMetaFromValue(value: RagflowRetrieveResult): JsonValue {
  * Register the `ragflow_retrieve` tool and its system-prompt guidance. The
  * registrations are effect-scoped, so an HMR reload or an uninstall removes
  * both without manual teardown.
+ *
+ * `maxChunks` is read per call through the settings-backed thunk, so the
+ * configuration page changes the next call's bound. `timeoutMs` is not: the
+ * tool registry reads a tool's budget once at registration, so a saved timeout
+ * applies at the next start — the page says so rather than pretending
+ * otherwise.
  */
 export function apply(ctx: Context, config: Config): void {
   // schemastery (Config) has already filled every defaulted field.
-  const { maxChunks, timeoutMs } = config as ResolvedConfig
+  let current = () => config as ResolvedConfig
+  installSettingsSection(ctx, RAGFLOW_TOOL_SETTINGS_NAMESPACE, Config, config, {
+    setSource: (source) => {
+      current = () => source() as ResolvedConfig
+    },
+    onChange: () => {},
+  })
+  const { timeoutMs } = current()
 
   ctx.systemPrompt.section({
     name: 'tool:ragflow_retrieve',
@@ -205,7 +222,7 @@ export function apply(ctx: Context, config: Config): void {
     isConcurrencySafe: () => true,
     async execute(args, exec) {
       const { question } = parseRetrieveArgs(args)
-      const result = await ctx.ragflow.retrieve({ question, maxChunks }, exec.signal)
+      const result = await ctx.ragflow.retrieve({ question, maxChunks: current().maxChunks }, exec.signal)
       return {
         chunks: result.chunks.map(projectChunk),
         truncated: result.truncated,

@@ -35,3 +35,14 @@
       config:
         maxChunks: 8
         timeoutMs: 30000
+
+    # ── Consumer: the configuration page ──────────────────────────────────────
+    # Serves http://127.0.0.1:<web port>/ragflow, editing the `ragflow-http` and
+    # `tool-ragflow` settings namespaces plus the API key credential. It injects
+    # `webServer`, so a surface without one (TUI, headless) simply never mounts
+    # it. Loopback only, whatever `dsh web --host` binds. Set `path` to move it;
+    # `disabled: true` in a later layer removes the page entirely.
+    - id: ragflow-config
+      name: '@deepseek-ai/dsh-ragflow/config'
+      config:
+        path: /ragflow

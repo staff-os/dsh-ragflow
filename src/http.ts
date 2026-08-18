@@ -16,7 +16,9 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { credentialRef } from '@deepseek-ai/dsh-credentials'
 import { launchEnvironmentOf } from '@deepseek-ai/dsh-launch-environment'
+import { installSettingsSection } from '@deepseek-ai/dsh-settings'
 import type {} from './index.ts'
+import { RAGFLOW_HTTP_SETTINGS_NAMESPACE } from './settings.ts'
 import {
   RAGFLOW_DEFAULT_BASE_URL,
   RAGFLOW_DEFAULT_SIMILARITY_THRESHOLD,
@@ -24,6 +26,7 @@ import {
 } from './provider.ts'
 import type { RagflowHttpProviderOptions } from './provider.ts'
 
+export { RAGFLOW_HTTP_SETTINGS_NAMESPACE } from './settings.ts'
 export {
   buildRetrievalBody,
   mapRagflowChunk,
@@ -42,13 +45,13 @@ export const name = 'ragflow-http'
 export const inject = ['ragflow']
 
 /** Credential reference resolved when no literal `apiKey` is configured. */
-const DEFAULT_API_KEY_ENV = 'RAGFLOW_API_KEY'
+export const DEFAULT_API_KEY_ENV = 'RAGFLOW_API_KEY'
 
 /** Launch-environment variable naming the endpoint base. */
-const BASE_URL_ENV = 'RAGFLOW_BASE_URL'
+export const BASE_URL_ENV = 'RAGFLOW_BASE_URL'
 
 /** Launch-environment variable naming the default datasets (comma-separated). */
-const DATASET_IDS_ENV = 'RAGFLOW_DATASET_IDS'
+export const DATASET_IDS_ENV = 'RAGFLOW_DATASET_IDS'
 
 /** Plugin config. Every field is optional — `apply` fills env-var and constant defaults. */
 export interface Config {
@@ -134,7 +137,20 @@ export function resolveProviderOptions(ctx: Context, config: Config): RagflowHtt
  * Register the RAGFlow HTTP retrieval provider with `ctx.ragflow`. The
  * registration is an effect owned by this plugin's fiber, so an HMR reload or
  * an uninstall unregisters it without manual teardown.
+ *
+ * The authoritative config is a thunk, not the entry object: while a settings
+ * provider is mounted, `installSettingsSection` points it at the resolved
+ * `ragflow-http` section, so a value saved in the configuration page reaches
+ * the NEXT retrieval without a reload. Options are resolved per operation
+ * already, so nothing here needs to react to a change.
  */
 export function apply(ctx: Context, config: Config): void {
-  ctx.ragflow.registerRetrieveProvider(new RagflowHttpProvider(() => resolveProviderOptions(ctx, config)))
+  let current = () => config
+  installSettingsSection(ctx, RAGFLOW_HTTP_SETTINGS_NAMESPACE, Config, config, {
+    setSource: (source) => {
+      current = source
+    },
+    onChange: () => {},
+  })
+  ctx.ragflow.registerRetrieveProvider(new RagflowHttpProvider(() => resolveProviderOptions(ctx, current())))
 }
