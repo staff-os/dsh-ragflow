@@ -91,6 +91,12 @@ export RAGFLOW_DATASET_IDS=dataset_id_1,dataset_id_2      # 除非写进 YAML，
 挂载了 DSH 凭据服务时，API Key 从 `~/.dsh/.credentials.yaml` 解析；否则回落到启动环境。切勿把密钥
 写进配置文件。
 
+启动环境是进程启动那一刻的快照，改环境变量不会影响已经跑着的 `dsh` —— 要在一个已经带上新值的
+shell 里重启它。Windows 上尤其容易踩：在图形界面改**系统变量**只是写注册表，所有已运行的进程都还
+拿着旧的环境块，**Explorer 也在其中**，因此从开始菜单或快捷方式启动的程序同样继承 Explorer 那份旧
+副本，直到重启 Explorer 或注销重登。配置页显示的是进程实际看到的值，所以它也是判断"环境没刷新"还
+是"值填错了"的最快办法。
+
 要覆盖某一行，在 profile 的 `cordis.patch.yml` 中重述它 —— patch 是**整体替换**该行的 `config`，
 不做深合并，所以要把这一行需要的键全部写出：
 
@@ -175,6 +181,7 @@ pnpm build       # tsdown → lib/{index,http,tool,config}.js
 | 配置页返回 `NOT_LOOPBACK` | 从局域网地址访问 | 在宿主机本机打开，或把端口转发到本地 |
 | 配置页返回 `SETTINGS_CONFLICT` | 页面加载后设置文档被别处改过 | 刷新页面后重新填写保存 |
 | API Key 输入框不可编辑 | 启动环境里的 `RAGFLOW_API_KEY` 遮蔽了凭据存储 | 改环境变量后重启 `dsh`，或取消该变量改由页面管理 |
+| 页面显示的仍是改之前的地址或数据集 | 进程继承的是改动之前的环境块 | 在改完之后新开的 shell 里重启 `dsh`；Windows 上还需重启 Explorer 或注销重登 |
 | `/ragflow` 打不开 | 该 surface 没有 web server，或该行被禁用 | `dsh --dump-config \| grep ragflow-config` |
 
 ## 已知限制

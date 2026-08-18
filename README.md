@@ -100,6 +100,14 @@ The API key resolves through the DSH credentials service when one is mounted
 (`~/.dsh/.credentials.yaml`), and through the launch environment otherwise. Never inline a key in a
 config file.
 
+The launch environment is a snapshot taken when the process starts, so editing a variable never
+reaches a running `dsh` — restart it from a shell that already carries the new value. On Windows
+that is easy to get wrong: editing **System variables** in the GUI only writes the registry, and
+every process already running keeps its old block — Explorer included, so anything started from the
+Start menu or a shortcut inherits Explorer's stale copy until you restart Explorer or sign out and
+back in. The page reports what the process actually sees, which makes it the quickest way to tell a
+stale environment from a wrong value.
+
 To override a row, restate it in your profile's `cordis.patch.yml` — a patch replaces a row's whole
 `config` rather than merging into it, so state every key that row needs:
 
@@ -186,6 +194,7 @@ pnpm build       # tsdown → lib/{index,http,tool,config}.js
 | The page answers `NOT_LOOPBACK` | Reached over a LAN address | Open it from the host itself, or tunnel the port |
 | The page answers `SETTINGS_CONFLICT` | The settings document moved since the page loaded | Reload the page and reapply |
 | The API key field is read-only | A launch-environment `RAGFLOW_API_KEY` shadows the store | Change the variable and restart `dsh`, or unset it to manage the key from the page |
+| The page still shows an endpoint or dataset you already changed | The process inherited the environment block from before the change | Restart `dsh` from a shell opened afterwards; on Windows also restart Explorer or sign out and back in |
 | No page at `/ragflow` | Surface without a web server, or the row is disabled | `dsh --dump-config \| grep ragflow-config` |
 
 ## Known limitations
